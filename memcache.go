@@ -95,10 +95,10 @@ func (m *MemLRU[V]) BatchSet(ctx context.Context, keys []string, values []V) err
 
 func (m *MemLRU[V]) BatchSetEx(ctx context.Context, keys []string, values []V, ttl time.Duration) error {
 	if len(keys) != len(values) {
-		return errors.New("keys and values are not the same length")
+		return errors.New("cachestore-mem: keys and values are not the same length")
 	}
 	if len(keys) == 0 {
-		return errors.New("no keys are passed")
+		return errors.New("cachestore-mem: no keys are passed")
 	}
 
 	for i, key := range keys {
@@ -114,7 +114,7 @@ func (m *MemLRU[V]) BatchSetEx(ctx context.Context, keys []string, values []V, t
 func (c *MemLRU[V]) GetEx(ctx context.Context, key string) (V, *time.Duration, bool, error) {
 	out, exists, err := c.Get(ctx, key)
 	if err != nil {
-		return out, nil, false, fmt.Errorf("get %w", err)
+		return out, nil, false, fmt.Errorf("cachestore-mem: get %w", err)
 	}
 
 	if !exists {
@@ -215,7 +215,7 @@ func (m *MemLRU[V]) GetOrSetWithLockEx(
 	v, err, _ := m.singleflight.Do(key, func() (V, error) {
 		v, err := getter(ctx, key)
 		if err != nil {
-			return out, fmt.Errorf("getter error: %w", err)
+			return out, fmt.Errorf("cachestore-mem: getter error: %w", err)
 		}
 
 		if err := m.setKeyValue(ctx, key, v); err != nil {
@@ -227,7 +227,7 @@ func (m *MemLRU[V]) GetOrSetWithLockEx(
 		return v, nil
 	})
 	if err != nil {
-		return out, fmt.Errorf("cachestore/memlru: singleflight error: %w", err)
+		return out, fmt.Errorf("cachestore-mem: singleflight error: %w", err)
 	}
 
 	return v, nil
