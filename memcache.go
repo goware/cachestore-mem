@@ -4,35 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/elastic/go-freelru"
 	"github.com/goware/cachestore"
 	"github.com/goware/singleflight"
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/zeebo/xxh3"
 )
 
-var _ cachestore.Store[any] = &MemLRU[any]{}
-
-// determines the minimum time between every TTL-based removal
-var lastExpiryCheckInterval = time.Second * 5
-
-const defaultLRUSize = 512
-
-func NewBackend(size int, opts ...cachestore.StoreOptions) (cachestore.Backend, error) {
+func NewBackend(size uint32, opts ...cachestore.StoreOptions) (cachestore.Backend, error) {
 	return NewCacheWithSize[any](size, opts...)
 }
 
 func NewCache[V any](opts ...cachestore.StoreOptions) (cachestore.Store[V], error) {
+	const defaultLRUSize = 512
 	return NewCacheWithSize[V](defaultLRUSize, opts...)
 }
 
-func NewCacheWithSize[V any](size int, opts ...cachestore.StoreOptions) (*MemLRU[V], error) {
-	if size < 1 {
-		return nil, errors.New("size must be greater or equal to 1")
+func NewCacheWithSize[V any](size uint32, opts ...cachestore.StoreOptions) (*MemLRU[V], error) {
+	if size == 0 {
+		return nil, errors.New("cachestore-mem: size cannot be 0")
 	}
 
-	backend, err := lru.New[string, V](size)
+	maxShards := uint32(runtime.NumCPU() * 16)                           // ie. 16*16=256
+	minShards := max(1, uint32(float64(size)/float64(runtime.NumCPU()))) // ie. 512/16=32
+
+	var shards uint32
+	if size <= maxShards*2 {
+		shards = minShards
+	} else {
+		shards = maxShards
+	}
+
+	capacity := uint32(float64(size) * 1.25)
+	lru, err := freelru.NewShardedWithSize[string, V](shards, size, capacity, hashStringXXH3)
 	if err != nil {
 		return nil, err
 	}
@@ -43,19 +50,20 @@ func NewCacheWithSize[V any](size int, opts ...cachestore.StoreOptions) (*MemLRU
 	}
 
 	memLRU := &MemLRU[V]{
-		options:         options,
-		backend:         backend,
-		expirationQueue: newExpirationQueue(),
+		options: options,
+		lru:     lru,
 	}
 
 	return memLRU, nil
 }
 
-type MemLRU[V any] struct {
-	options         cachestore.StoreOptions
-	backend         *lru.Cache[string, V]
-	expirationQueue *expirationQueue
+func hashStringXXH3(s string) uint32 {
+	return uint32(xxh3.HashString(s))
+}
 
+type MemLRU[V any] struct {
+	options      cachestore.StoreOptions
+	lru          *freelru.ShardedLRU[string, V]
 	singleflight singleflight.Group[string, V]
 }
 
@@ -65,13 +73,8 @@ func (m *MemLRU[V]) Name() string {
 	return "memcache"
 }
 
-func (m *MemLRU[V]) UseSerializer() bool {
-	return false
-}
-
 func (m *MemLRU[V]) Exists(ctx context.Context, key string) (bool, error) {
-	m.removeExpiredKeys()
-	_, exists := m.backend.Peek(key)
+	_, exists := m.lru.Peek(key)
 	return exists, nil
 }
 
@@ -80,11 +83,8 @@ func (m *MemLRU[V]) Set(ctx context.Context, key string, value V) error {
 }
 
 func (m *MemLRU[V]) SetEx(ctx context.Context, key string, value V, ttl time.Duration) error {
-	if err := m.setKeyValue(ctx, key, value); err != nil {
+	if err := m.setKeyValue(key, value, ttl); err != nil {
 		return err
-	}
-	if ttl > 0 {
-		m.expirationQueue.Push(key, ttl)
 	}
 	return nil
 }
@@ -102,43 +102,15 @@ func (m *MemLRU[V]) BatchSetEx(ctx context.Context, keys []string, values []V, t
 	}
 
 	for i, key := range keys {
-		m.backend.Add(key, values[i])
-		if ttl > 0 {
-			m.expirationQueue.Push(key, ttl) // TODO: probably a more efficient way to do this batch push
-		}
+		m.setKeyValue(key, values[i], ttl)
 	}
 
 	return nil
 }
 
-func (c *MemLRU[V]) GetEx(ctx context.Context, key string) (V, *time.Duration, bool, error) {
-	out, exists, err := c.Get(ctx, key)
-	if err != nil {
-		return out, nil, false, fmt.Errorf("cachestore-mem: get %w", err)
-	}
-
-	if !exists {
-		return out, nil, false, nil
-	}
-
-	item, ok := c.expirationQueue.GetItem(key)
-	if !ok {
-		return out, nil, true, nil
-	}
-
-	if item.expiresAt.Before(time.Now()) {
-		return out, nil, false, nil
-	}
-
-	ttl := item.expiresAt.Sub(time.Now())
-
-	return out, &ttl, true, nil
-}
-
 func (m *MemLRU[V]) Get(ctx context.Context, key string) (V, bool, error) {
 	var out V
-	m.removeExpiredKeys()
-	v, ok := m.backend.Get(key)
+	v, ok := m.lru.Get(key)
 
 	if !ok {
 		// key not found, respond with no data
@@ -152,10 +124,9 @@ func (m *MemLRU[V]) BatchGet(ctx context.Context, keys []string) ([]V, []bool, e
 	vals := make([]V, 0, len(keys))
 	oks := make([]bool, 0, len(keys))
 	var out V
-	m.removeExpiredKeys()
 
 	for _, key := range keys {
-		v, ok := m.backend.Get(key)
+		v, ok := m.lru.Get(key)
 		if !ok {
 			// key not found, add empty/default value
 			vals = append(vals, out)
@@ -171,7 +142,7 @@ func (m *MemLRU[V]) BatchGet(ctx context.Context, keys []string) ([]V, []bool, e
 }
 
 func (m *MemLRU[V]) Delete(ctx context.Context, key string) error {
-	present := m.backend.Remove(key)
+	present := m.lru.Remove(key)
 
 	// NOTE/TODO: we do not check for presence, prob okay
 	_ = present
@@ -179,9 +150,9 @@ func (m *MemLRU[V]) Delete(ctx context.Context, key string) error {
 }
 
 func (m *MemLRU[V]) DeletePrefix(ctx context.Context, keyPrefix string) error {
-	for _, key := range m.backend.Keys() {
+	for _, key := range m.lru.Keys() {
 		if strings.HasPrefix(key, keyPrefix) {
-			m.backend.Remove(key)
+			m.lru.Remove(key)
 		}
 	}
 
@@ -189,7 +160,7 @@ func (m *MemLRU[V]) DeletePrefix(ctx context.Context, keyPrefix string) error {
 }
 
 func (m *MemLRU[V]) ClearAll(ctx context.Context) error {
-	m.backend.Purge()
+	m.lru.Purge()
 	return nil
 }
 
@@ -202,12 +173,10 @@ func (m *MemLRU[V]) GetOrSetWithLockEx(
 ) (V, error) {
 	var out V
 
-	m.removeExpiredKeys()
-
 	ctx, cancel := context.WithTimeout(ctx, m.options.LockRetryTimeout)
 	defer cancel()
 
-	v, ok := m.backend.Get(key)
+	v, ok := m.lru.Get(key)
 	if ok {
 		return v, nil
 	}
@@ -217,12 +186,8 @@ func (m *MemLRU[V]) GetOrSetWithLockEx(
 		if err != nil {
 			return out, fmt.Errorf("cachestore-mem: getter error: %w", err)
 		}
-
-		if err := m.setKeyValue(ctx, key, v); err != nil {
+		if err := m.setKeyValue(key, v, ttl); err != nil {
 			return out, err
-		}
-		if ttl > 0 {
-			m.expirationQueue.Push(key, ttl)
 		}
 		return v, nil
 	})
@@ -233,25 +198,17 @@ func (m *MemLRU[V]) GetOrSetWithLockEx(
 	return v, nil
 }
 
-func (m *MemLRU[V]) setKeyValue(ctx context.Context, key string, value V) error {
+func (m *MemLRU[V]) setKeyValue(key string, value V, ttl time.Duration) error {
 	if len(key) > cachestore.MaxKeyLength {
 		return cachestore.ErrKeyLengthTooLong
 	}
 	if len(key) == 0 {
 		return cachestore.ErrInvalidKey
 	}
-	m.backend.Add(key, value)
+	if ttl > 0 {
+		m.lru.AddWithLifetime(key, value, ttl)
+	} else {
+		m.lru.Add(key, value)
+	}
 	return nil
-}
-
-func (m *MemLRU[V]) removeExpiredKeys() {
-	if !m.expirationQueue.ShouldExpire() {
-		// another removal happened recently
-		return
-	}
-	expiredKeys := m.expirationQueue.Expired()
-	for _, key := range expiredKeys {
-		m.backend.Remove(key)
-	}
-	m.expirationQueue.UpdateLastCheckTime()
 }
