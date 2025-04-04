@@ -59,6 +59,10 @@ func TestCacheString(t *testing.T) {
 		c.Set(ctx, fmt.Sprintf("i%d", i), fmt.Sprintf("v%d", i))
 	}
 	for i := 0; i < 10; i++ {
+		exists, err := c.Exists(ctx, fmt.Sprintf("i%d", i))
+		require.NoError(t, err)
+		require.True(t, exists)
+
 		v, _, err := c.Get(ctx, fmt.Sprintf("i%d", i))
 		if err != nil {
 			t.Errorf("expected %d to be in cache", i)
