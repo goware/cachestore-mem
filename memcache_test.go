@@ -59,6 +59,10 @@ func TestCacheString(t *testing.T) {
 		c.Set(ctx, fmt.Sprintf("i%d", i), fmt.Sprintf("v%d", i))
 	}
 	for i := 0; i < 10; i++ {
+		exists, err := c.Exists(ctx, fmt.Sprintf("i%d", i))
+		require.NoError(t, err)
+		require.True(t, exists)
+
 		v, _, err := c.Get(ctx, fmt.Sprintf("i%d", i))
 		if err != nil {
 			t.Errorf("expected %d to be in cache", i)
@@ -192,6 +196,99 @@ func TestGetOrSetWithLock(t *testing.T) {
 
 	cache, err := NewCache[string]()
 	require.NoError(t, err)
+
+	var counter atomic.Uint32
+	getter := func(ctx context.Context, key string) (string, error) {
+		counter.Add(1)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+			return "result:" + key, nil
+		}
+	}
+
+	concurrentCalls := 15
+	results := make(chan string, concurrentCalls)
+	key := fmt.Sprintf("concurrent-%d", rand.Uint64())
+
+	var wg errgroup.Group
+	for i := 0; i < concurrentCalls; i++ {
+		wg.Go(func() error {
+			v, err := cache.GetOrSetWithLock(ctx, key, getter)
+			if err != nil {
+				return err
+			}
+			results <- v
+			return nil
+		})
+	}
+
+	require.NoError(t, wg.Wait())
+	assert.Equalf(t, 1, int(counter.Load()), "getter should be called only once")
+
+	for i := 0; i < concurrentCalls; i++ {
+		select {
+		case v := <-results:
+			assert.Equal(t, "result:"+key, v)
+		default:
+			t.Errorf("expected %d results but only got %d", concurrentCalls, i)
+		}
+	}
+}
+
+func TestBackend(t *testing.T) {
+	backend, err := NewBackend(500)
+	require.NoError(t, err)
+
+	cache := cachestore.OpenStore[string](backend)
+
+	{
+		err = cache.Set(context.Background(), "key", "value")
+		require.NoError(t, err)
+
+		value, exists, err := cache.Get(context.Background(), "key")
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Equal(t, "value", value)
+
+		err = cache.Delete(context.Background(), "key")
+		require.NoError(t, err)
+
+		value, exists, err = cache.Get(context.Background(), "key")
+		require.NoError(t, err)
+		require.False(t, exists)
+		require.Equal(t, "", value)
+	}
+
+	{
+		keys := []string{"key1", "key2", "key3"}
+		values := []string{"value1", "value2", "value3"}
+		err = cache.BatchSet(context.Background(), keys, values)
+		require.NoError(t, err)
+
+		batch, exists, err := cache.BatchGet(context.Background(), keys)
+		require.NoError(t, err)
+		require.Equal(t, values, batch)
+		require.Equal(t, []bool{true, true, true}, exists)
+
+		err = cache.DeletePrefix(context.Background(), "key")
+		require.NoError(t, err)
+
+		batch, exists, err = cache.BatchGet(context.Background(), keys)
+		require.NoError(t, err)
+		require.Equal(t, []string{"", "", ""}, batch)
+		require.Equal(t, []bool{false, false, false}, exists)
+	}
+}
+
+func TestBackendGetOrSetWithLock(t *testing.T) {
+	backend, err := NewBackend(500)
+	require.NoError(t, err)
+
+	cache := cachestore.OpenStore[string](backend)
+
+	ctx := context.Background()
 
 	var counter atomic.Uint32
 	getter := func(ctx context.Context, key string) (string, error) {

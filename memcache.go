@@ -73,12 +73,19 @@ func (m *MemLRU[V]) Name() string {
 	return "memcache"
 }
 
+func (m *MemLRU[V]) Options() cachestore.StoreOptions {
+	return m.options
+}
+
 func (m *MemLRU[V]) Exists(ctx context.Context, key string) (bool, error) {
 	_, exists := m.lru.Peek(key)
 	return exists, nil
 }
 
 func (m *MemLRU[V]) Set(ctx context.Context, key string, value V) error {
+	// note: m.options.DefaultKeyExpiry is 0, so this is the same as SetEx with ttl=0
+	// which means the key will not expire, and will only be evicted when it is removed
+	// from the lru cache.
 	return m.SetEx(ctx, key, value, m.options.DefaultKeyExpiry)
 }
 
@@ -100,11 +107,9 @@ func (m *MemLRU[V]) BatchSetEx(ctx context.Context, keys []string, values []V, t
 	if len(keys) == 0 {
 		return errors.New("cachestore-mem: no keys are passed")
 	}
-
 	for i, key := range keys {
 		m.setKeyValue(key, values[i], ttl)
 	}
-
 	return nil
 }
 
@@ -155,7 +160,6 @@ func (m *MemLRU[V]) DeletePrefix(ctx context.Context, keyPrefix string) error {
 			m.lru.Remove(key)
 		}
 	}
-
 	return nil
 }
 
