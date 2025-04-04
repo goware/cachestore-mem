@@ -73,6 +73,10 @@ func (m *MemLRU[V]) Name() string {
 	return "memcache"
 }
 
+func (m *MemLRU[V]) Options() cachestore.StoreOptions {
+	return m.options
+}
+
 func (m *MemLRU[V]) Exists(ctx context.Context, key string) (bool, error) {
 	_, exists := m.lru.Peek(key)
 	return exists, nil
