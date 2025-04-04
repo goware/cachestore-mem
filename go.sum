@@ -2,6 +2,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/elastic/go-freelru v0.16.0 h1:gG2HJ1WXN2tNl5/p40JS/l59HjvjRhjyAa+oFTRArYs=
 github.com/elastic/go-freelru v0.16.0/go.mod h1:bSdWT4M0lW79K8QbX6XY2heQYSCqD7THoYf82pT/H3I=
+github.com/goware/cachestore2 v0.12.0 h1:89renl9yYUrOVrQ8VWxC0q4/3YXa0P6mbTc5k5YiRHc=
+github.com/goware/cachestore2 v0.12.0/go.mod h1:PR+lXK8UXa/wjKB7mpIj6HtRhC7vbcRXx4b5F1Av/ik=
 github.com/goware/singleflight v0.3.0 h1:b+OM844fuHzanOlE84WeI+G8YMksUY636v0bdcAfnHE=
 github.com/goware/singleflight v0.3.0/go.mod h1:vcmu9KY0BS9WbA3Pn+WOdUQlwT1CPZJm1Fgaz2l88Dc=
 github.com/klauspost/cpuid/v2 v2.2.10 h1:tBs3QSyvjDyFTq3uoc/9xFpCuOsJQFNPiAhYdw2skhE=
