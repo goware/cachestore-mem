@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/elastic/go-freelru"
-	"github.com/goware/cachestore"
+	cachestore "github.com/goware/cachestore2"
 	"github.com/goware/singleflight"
 	"github.com/zeebo/xxh3"
 )

@@ -1,6 +1,6 @@
 package memcache
 
-import "github.com/goware/cachestore"
+import cachestore "github.com/goware/cachestore2"
 
 type Config struct {
 	cachestore.StoreOptions

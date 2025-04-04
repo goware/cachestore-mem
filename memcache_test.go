@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goware/cachestore"
+	cachestore "github.com/goware/cachestore2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"

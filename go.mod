@@ -2,11 +2,11 @@ module github.com/goware/cachestore-mem
 
 go 1.24.1
 
-replace github.com/goware/cachestore => ../cachestore
+replace github.com/goware/cachestore2 => ../cachestore2
 
 require (
 	github.com/elastic/go-freelru v0.16.0
-	github.com/goware/cachestore v0.11.0
+	github.com/goware/cachestore2 v0.0.0-00010101000000-000000000000
 	github.com/goware/singleflight v0.3.0
 	github.com/stretchr/testify v1.10.0
 	github.com/zeebo/xxh3 v1.0.2
