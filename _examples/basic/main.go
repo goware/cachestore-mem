@@ -10,12 +10,12 @@ import (
 )
 
 func main() {
-	backend, err := memcache.NewBackend(200, cachestore.WithDefaultKeyExpiry(1*time.Second))
+	backend, err := memcache.NewBackend(200) //, cachestore.WithDefaultKeyExpiry(1*time.Second))
 	if err != nil {
 		panic(err)
 	}
 
-	store := cachestore.OpenStore[string](backend) //, cachestore.WithDefaultKeyExpiry(1*time.Second))
+	store := cachestore.OpenStore[string](backend, cachestore.WithDefaultKeyExpiry(1*time.Second))
 
 	ctx := context.Background()
 
