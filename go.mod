@@ -6,7 +6,7 @@ go 1.23.0
 
 require (
 	github.com/elastic/go-freelru v0.16.0
-	github.com/goware/cachestore2 v0.12.2
+	github.com/goware/cachestore2 v0.12.3-0.20250429120429-c2efd1eab852
 	github.com/goware/singleflight v0.3.0
 	github.com/stretchr/testify v1.10.0
 	github.com/zeebo/xxh3 v1.0.2
