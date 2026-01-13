@@ -329,3 +329,98 @@ func TestBackendGetOrSetWithLock(t *testing.T) {
 		}
 	}
 }
+
+func TestTTLZeroDoesNotExpire(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCacheWithSize[string](100)
+	require.NoError(t, err)
+
+	for i := 0; i < 10; i++ {
+		err := cache.SetEx(ctx, fmt.Sprintf("key-%d", i), fmt.Sprintf("value-%d", i), 0)
+		require.NoError(t, err)
+	}
+
+	time.Sleep(3 * time.Second)
+
+	for i := 0; i < 10; i++ {
+		val, exists, err := cache.Get(ctx, fmt.Sprintf("key-%d", i))
+		require.NoError(t, err)
+		require.True(t, exists, "key-%d should exist with TTL=0", i)
+		require.Equal(t, fmt.Sprintf("value-%d", i), val)
+	}
+}
+
+func TestTTLExpiryCorrectness(t *testing.T) {
+	ctx := context.Background()
+	cache, err := NewCacheWithSize[string](100)
+	require.NoError(t, err)
+
+	require.NoError(t, cache.SetEx(ctx, "expires-fast", "value1", 1*time.Second))
+	require.NoError(t, cache.SetEx(ctx, "no-expiry", "value2", 0))
+	require.NoError(t, cache.SetEx(ctx, "expires-slow", "value3", 10*time.Second))
+
+	_, exists, _ := cache.Get(ctx, "expires-fast")
+	require.True(t, exists)
+	_, exists, _ = cache.Get(ctx, "no-expiry")
+	require.True(t, exists)
+	_, exists, _ = cache.Get(ctx, "expires-slow")
+	require.True(t, exists)
+
+	time.Sleep(2 * time.Second)
+
+	_, exists, _ = cache.Get(ctx, "expires-fast")
+	require.False(t, exists, "expires-fast should have expired")
+	_, exists, _ = cache.Get(ctx, "no-expiry")
+	require.True(t, exists, "no-expiry should still exist")
+	_, exists, _ = cache.Get(ctx, "expires-slow")
+	require.True(t, exists, "expires-slow should still exist")
+}
+
+func TestConcurrentSetWithTTLAndGet(t *testing.T) {
+	ctx := context.Background()
+	const iterations = 100
+	const goroutines = 10
+
+	cache, err := NewCacheWithSize[int](uint32(iterations * goroutines * 2))
+	require.NoError(t, err)
+
+	var wg errgroup.Group
+
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Go(func() error {
+			for i := 0; i < iterations; i++ {
+				key := fmt.Sprintf("key-%d-%d", g, i)
+				if err := cache.SetEx(ctx, key, g*iterations+i, 5*time.Second); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		wg.Go(func() error {
+			for i := 0; i < iterations; i++ {
+				key := fmt.Sprintf("key-%d-%d", g, i)
+				val, exists, err := cache.Get(ctx, key)
+				if err != nil {
+					return err
+				}
+				if exists && val != g*iterations+i {
+					return fmt.Errorf("wrong value for %s: got %d, want %d", key, val, g*iterations+i)
+				}
+			}
+			return nil
+		})
+	}
+
+	require.NoError(t, wg.Wait())
+
+	for g := 0; g < goroutines; g++ {
+		for i := 0; i < iterations; i++ {
+			key := fmt.Sprintf("key-%d-%d", g, i)
+			val, exists, err := cache.Get(ctx, key)
+			require.NoError(t, err)
+			require.True(t, exists, "key %s should exist", key)
+			require.Equal(t, g*iterations+i, val)
+		}
+	}
+}
