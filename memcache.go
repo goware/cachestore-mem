@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
-	"github.com/elastic/go-freelru"
 	cachestore "github.com/goware/cachestore2"
 	"github.com/goware/singleflight"
-	"github.com/zeebo/xxh3"
+	"github.com/maypok86/otter/v2"
 )
 
 func NewBackend(size uint32, opts ...cachestore.StoreOptions) (cachestore.Backend, error) {
@@ -28,18 +26,10 @@ func NewCacheWithSize[V any](size uint32, opts ...cachestore.StoreOptions) (*Mem
 		return nil, errors.New("cachestore-mem: size cannot be 0")
 	}
 
-	maxShards := uint32(runtime.NumCPU() * 16)                           // ie. 16*16=256
-	minShards := max(1, uint32(float64(size)/float64(runtime.NumCPU()))) // ie. 512/16=32
-
-	var shards uint32
-	if size <= maxShards*2 {
-		shards = minShards
-	} else {
-		shards = maxShards
-	}
-
-	capacity := uint32(float64(size) * 1.25)
-	lru, err := freelru.NewShardedWithSize[string, V](shards, size, capacity, hashStringXXH3)
+	cache, err := otter.New[string, V](&otter.Options[string, V]{
+		MaximumSize:      int(size),
+		ExpiryCalculator: otter.ExpiryWriting[string, V](0), // enable expiry, actual TTL set per-key
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -51,19 +41,15 @@ func NewCacheWithSize[V any](size uint32, opts ...cachestore.StoreOptions) (*Mem
 
 	memLRU := &MemLRU[V]{
 		options: options,
-		lru:     lru,
+		cache:   cache,
 	}
 
 	return memLRU, nil
 }
 
-func hashStringXXH3(s string) uint32 {
-	return uint32(xxh3.HashString(s))
-}
-
 type MemLRU[V any] struct {
 	options      cachestore.StoreOptions
-	lru          *freelru.ShardedLRU[string, V]
+	cache        *otter.Cache[string, V]
 	singleflight singleflight.Group[string, V]
 }
 
@@ -78,14 +64,11 @@ func (m *MemLRU[V]) Options() cachestore.StoreOptions {
 }
 
 func (m *MemLRU[V]) Exists(ctx context.Context, key string) (bool, error) {
-	_, exists := m.lru.Peek(key)
-	return exists, nil
+	_, ok := m.cache.GetIfPresent(key)
+	return ok, nil
 }
 
 func (m *MemLRU[V]) Set(ctx context.Context, key string, value V) error {
-	// note: m.options.DefaultKeyExpiry is 0, so this is the same as SetEx with ttl=0
-	// which means the key will not expire, and will only be evicted when it is removed
-	// from the lru cache.
 	return m.SetEx(ctx, key, value, m.options.DefaultKeyExpiry)
 }
 
@@ -115,13 +98,10 @@ func (m *MemLRU[V]) BatchSetEx(ctx context.Context, keys []string, values []V, t
 
 func (m *MemLRU[V]) Get(ctx context.Context, key string) (V, bool, error) {
 	var out V
-	v, ok := m.lru.Get(key)
-
+	v, ok := m.cache.GetIfPresent(key)
 	if !ok {
-		// key not found, respond with no data
 		return out, false, nil
 	}
-
 	return v, true, nil
 }
 
@@ -131,14 +111,12 @@ func (m *MemLRU[V]) BatchGet(ctx context.Context, keys []string) ([]V, []bool, e
 	var out V
 
 	for _, key := range keys {
-		v, ok := m.lru.Get(key)
+		v, ok := m.cache.GetIfPresent(key)
 		if !ok {
-			// key not found, add empty/default value
 			vals = append(vals, out)
 			oks = append(oks, false)
 			continue
 		}
-
 		vals = append(vals, v)
 		oks = append(oks, true)
 	}
@@ -147,24 +125,25 @@ func (m *MemLRU[V]) BatchGet(ctx context.Context, keys []string) ([]V, []bool, e
 }
 
 func (m *MemLRU[V]) Delete(ctx context.Context, key string) error {
-	present := m.lru.Remove(key)
-
-	// NOTE/TODO: we do not check for presence, prob okay
-	_ = present
+	m.cache.Invalidate(key)
 	return nil
 }
 
 func (m *MemLRU[V]) DeletePrefix(ctx context.Context, keyPrefix string) error {
-	for _, key := range m.lru.Keys() {
+	var toDelete []string
+	for key := range m.cache.All() {
 		if strings.HasPrefix(key, keyPrefix) {
-			m.lru.Remove(key)
+			toDelete = append(toDelete, key)
 		}
+	}
+	for _, key := range toDelete {
+		m.cache.Invalidate(key)
 	}
 	return nil
 }
 
 func (m *MemLRU[V]) ClearAll(ctx context.Context) error {
-	m.lru.Purge()
+	m.cache.InvalidateAll()
 	return nil
 }
 
@@ -180,7 +159,7 @@ func (m *MemLRU[V]) GetOrSetWithLockEx(
 	ctx, cancel := context.WithTimeout(ctx, m.options.LockRetryTimeout)
 	defer cancel()
 
-	v, ok := m.lru.Get(key)
+	v, ok := m.cache.GetIfPresent(key)
 	if ok {
 		return v, nil
 	}
@@ -209,10 +188,9 @@ func (m *MemLRU[V]) setKeyValue(key string, value V, ttl time.Duration) error {
 	if len(key) == 0 {
 		return cachestore.ErrInvalidKey
 	}
+	m.cache.Set(key, value)
 	if ttl > 0 {
-		m.lru.AddWithLifetime(key, value, ttl)
-	} else {
-		m.lru.Add(key, value)
+		m.cache.SetExpiresAfter(key, ttl)
 	}
 	return nil
 }
