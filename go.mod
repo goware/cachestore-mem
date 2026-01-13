@@ -5,7 +5,7 @@ go 1.24.0
 // replace github.com/goware/cachestore2 => ../cachestore2
 
 require (
-	github.com/goware/cachestore2 v0.12.2
+	github.com/goware/cachestore2 v0.12.3
 	github.com/goware/singleflight v0.3.0
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/stretchr/testify v1.11.1

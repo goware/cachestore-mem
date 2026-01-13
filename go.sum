@@ -1,7 +1,7 @@
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/goware/cachestore2 v0.12.2 h1:04YGXkMwbH1xe82siCO7iaPhetntRABN5fWhBKEzduY=
-github.com/goware/cachestore2 v0.12.2/go.mod h1:PR+lXK8UXa/wjKB7mpIj6HtRhC7vbcRXx4b5F1Av/ik=
+github.com/goware/cachestore2 v0.12.3 h1:V4VODChSAV29p8htHj8Lb36Hvv28CLrJsw49gx0h+ks=
+github.com/goware/cachestore2 v0.12.3/go.mod h1:PR+lXK8UXa/wjKB7mpIj6HtRhC7vbcRXx4b5F1Av/ik=
 github.com/goware/singleflight v0.3.0 h1:b+OM844fuHzanOlE84WeI+G8YMksUY636v0bdcAfnHE=
 github.com/goware/singleflight v0.3.0/go.mod h1:vcmu9KY0BS9WbA3Pn+WOdUQlwT1CPZJm1Fgaz2l88Dc=
 github.com/maypok86/otter/v2 v2.3.0 h1:8H8AVVFUSzJwIegKwv1uF5aGitTY+AIrtktg7OcLs8w=
